@@ -33,8 +33,7 @@ namespace From_CSV_to_Files
 
         private static void Main()
         {
-            var task = new Task(StartProcess);
-            task.Start();
+            var task = StartProcess();
             task.Wait();
             Console.Write("\r\nPress any button to close app");
             Console.ReadKey();
@@ -42,21 +41,12 @@ namespace From_CSV_to_Files
         /// <summary>
         /// Запуск процесса обработки файлов
         /// </summary>
-        private static void StartProcess()
+        private static async Task StartProcess()
         {
             var filesPath = GetFilesPath(Csvpath, Filetype);
             for (var i = filesPath.Length - 1; i >= 0; --i)
             {
-                var temDictionary = GetContentAndType(filesPath[i]);
-                for (var j = temDictionary[MainFieldList[0]].Count - 1; j >= 0; --j)
-                {
-                    DoSave(
-                        temDictionary[MainFieldList[0]][j],
-                        temDictionary[MainFieldList[1]][j],
-                        temDictionary[MainFieldList[2]][j]
-                    );
-                    Console.Write("\r\nFile name - {0}", temDictionary[MainFieldList[1]][j]);
-                }
+                await StartRead(filesPath[i]);
             }
         }
         /// <summary>
@@ -64,47 +54,51 @@ namespace From_CSV_to_Files
         /// </summary>
         /// <param name="filePath">Строка содержащая путь к файлу</param>
         /// <returns>Славорь где ключ - название поля, а значение - все возможные значения этого поля</returns>
-        private static Dictionary<string, List<string>> GetContentAndType(string filePath)
+        private static async Task StartRead(string filePath)
         {
-            if (string.IsNullOrEmpty(filePath)) return new Dictionary<string, List<string>>();
-            var contentDictionary = new Dictionary<string, List<string>>();
+            if (string.IsNullOrEmpty(filePath)) return;
             var reader = new StreamReader(File.OpenRead(filePath));
-            ReadFile(reader, ref contentDictionary);
-            return contentDictionary;
+            await ReadFile(reader);
         }
         /// <summary>
         /// Функция для чтения данных из файла.
         /// </summary>
         /// <param name="reader">StreamReader для считывания данных из файла.</param>
-        /// <param name="datas">Структура в которую будут добавлятся данные.</param>
-        private static void ReadFile(StreamReader reader, ref Dictionary<string, List<string>> datas)
+        private static async Task ReadFile(StreamReader reader)
         {
-            if (reader == null || datas == null) return;
+            if (reader == null) return;
             var lineNumber = 0;
             var keyIndexes = new Dictionary<int, string>();
+            var datas = new Dictionary<string, string>();
             while (!reader.EndOfStream)
             {
+                string line;
+                string[] values;
                 if (lineNumber == 0)
                 {
                     ++lineNumber;
-                    var fieldNamesLine = reader.ReadLine();
-                    if (fieldNamesLine == null) continue;
-                    var fieldNamesList = fieldNamesLine.Split(',');
-                    for (var i = fieldNamesList.Length - 1; i >= 0; --i)
+                    line = await reader.ReadLineAsync();
+                    if (line == null) continue;
+                    values = line.Split(new[] { "\",\"" }, StringSplitOptions.None);
+                    for (var i = values.Length - 1; i >= 0; --i)
                     {
-                        datas.Add(fieldNamesList[i].Replace("\"", ""), new List<string>());
-                        keyIndexes.Add(i, fieldNamesList[i].Replace("\"", ""));
+                        keyIndexes.Add(i, values[i].Replace("\"", ""));
                     }
                 }
                 else
                 {
-                    var line = reader.ReadLine();
+                    line = await reader.ReadLineAsync();
                     if (line == null) continue;
-                    var values = line.Split(',');
+                    values = line.Split(new[]{ "\",\"" }, StringSplitOptions.None);
                     for (var i = values.Length - 1; i >= 0; --i)
                     {
-                        datas[keyIndexes[i]].Add(values[i].Replace("\"", ""));
+                        datas.Add(keyIndexes[i], string.Empty);
+                        datas[keyIndexes[i]] = values[i].Replace("\"", "");
                     }
+                    var task = new Task(() => DoSave(datas[MainFieldList[0]], datas[MainFieldList[1]], datas[MainFieldList[2]]));
+                    task.Start();
+                    task.Wait();
+                    datas.Clear();
                 }
             }
         }
@@ -116,11 +110,9 @@ namespace From_CSV_to_Files
         /// <returns></returns>
         private static string[] GetFilesPath(string path, string type)
         {
-            if (!string.IsNullOrEmpty(path) && !string.IsNullOrEmpty(type))
-            {
-                return Directory.GetFiles(path, type);
-            }
-            return new[] { "" };
+            if (string.IsNullOrEmpty(path) || string.IsNullOrEmpty(type)) return new[] {""};
+            if (!Directory.Exists(path)) Directory.CreateDirectory(path);
+            return Directory.GetFiles(path, type);
         }
         /// <summary>
         /// Функция для сохранения полученного в виде Base64 строки файла
@@ -134,10 +126,6 @@ namespace From_CSV_to_Files
             {
                 var fullPath = Savepath + '\\';
                 fullPath += (string.IsNullOrEmpty(subfolder)) ? "" : subfolder ;
-                /*
-                   !!!!!!!!Допилить доступ к папке, по дефолту он поскуда папку создаёт только для чтения!!!!!!!!
-                */
-                Console.Write("\r\nSome rule - " + HasWritePermissionOnDir(Savepath));
                 if (!Directory.Exists(Savepath))
                 {
                     Directory.CreateDirectory(Savepath);
@@ -152,6 +140,7 @@ namespace From_CSV_to_Files
                 }
                 using (var stream = File.Create(fullPath + '\\' + name))
                 {
+                    Console.Write("\r\nFile path - {0},\r\nFile name - {1}", subfolder, name);
                     var byteArray = Convert.FromBase64String(base64Content);
                     stream.Write(byteArray, 0, byteArray.Length);
                 }
